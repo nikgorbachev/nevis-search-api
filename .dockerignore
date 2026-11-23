@@ -1,0 +1,10 @@
+*
+!requirements.txt
+!app/
+!app/*.py
+!alembic.ini
+!migrations/
+!migrations/*.py
+!migrations/*.mako
+!migrations/versions/
+!migrations/versions/*.py
