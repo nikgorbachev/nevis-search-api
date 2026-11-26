@@ -2,7 +2,8 @@ from datetime import datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Text, func
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -23,6 +24,7 @@ class Client(Base):
     email: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     social_links: Mapped[list[str]] = mapped_column(JSON)
+    description_embedding: Mapped[list[float] | None] = mapped_column(Vector(384), nullable=True)
 
 
 class Document(Base):
@@ -44,4 +46,14 @@ class DocumentChunk(Base):
     ordinal: Mapped[int] = mapped_column(primary_key=True)
     start_char: Mapped[int]
     end_char: Mapped[int]
+    normalized_title: Mapped[str] = mapped_column(Text, default="")
+    normalized_passage: Mapped[str] = mapped_column(Text, default="")
+    search_vector: Mapped[str | None] = mapped_column(TSVECTOR, nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(384))
+
+
+class SearchVocab(Base):
+    __tablename__ = "search_vocab"
+
+    word: Mapped[str] = mapped_column(Text, primary_key=True)
+    doc_freq: Mapped[int] = mapped_column(Integer, default=1)

@@ -7,14 +7,29 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.embedding import EmbeddingUnavailable, index_documents
-from app.search import client_hits, document_hits
+from app.embedding import (
+    EmbeddingUnavailable,
+    embed_client_descriptions,
+    index_documents,
+    upsert_vocab,
+    vocab_for_clients,
+    vocab_for_documents,
+)
 from app.models import Client, Document
 from app.schemas import (
-    ClientCreate, ClientHit, ClientResponse, DocumentCreate, DocumentHit, DocumentResponse, SearchResponse,
+    ClientCreate,
+    ClientHit,
+    ClientResponse,
+    DocumentCreate,
+    DocumentHit,
+    DocumentResponse,
 )
+from app.search import client_hits, document_hits
 
-app = FastAPI(title="Nevis Search API")
+app = FastAPI(
+    title="Nevis Search API",
+    description="Hybrid client and document search API with normalized indexing, fuzzy typo recovery, and verbatim evidence highlighting.",
+)
 DatabaseSession = Annotated[Session, Depends(get_session)]
 
 
@@ -26,8 +41,10 @@ def embedding_error(request, error):
 @app.post("/clients", status_code=status.HTTP_201_CREATED)
 def create_client(payload: ClientCreate, session: DatabaseSession) -> ClientResponse:
     client = Client(**payload.model_dump())
+    embed_client_descriptions([client])
     session.add(client)
     session.flush()
+    upsert_vocab(session, vocab_for_clients([client]))
     response = ClientResponse.model_validate(client)
     session.commit()
     return response
@@ -48,29 +65,68 @@ def create_document(
     session.add(document)
     session.flush()
     session.add_all(index_documents([document]))
+    upsert_vocab(session, vocab_for_documents([document]))
     response = DocumentResponse.model_validate(document)
     session.commit()
     return response
 
 
+@app.get(
+    "/documents/{id}",
+    summary="Fetch a document by ID",
+    responses={404: {"description": "Document not found"}},
+)
+def get_document(id: str, session: DatabaseSession) -> DocumentResponse:
+    document = session.get(Document, id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return DocumentResponse.model_validate(document)
+
+
 @app.get("/search", summary="Search clients and documents")
 def search(
-    q: Annotated[str, Query(min_length=1, max_length=256)],
+    q: Annotated[str, Query(min_length=1, max_length=256, description="Search query")],
     session: DatabaseSession,
-    type: Literal["client", "document"] | None = None,
-    view: Literal["list", "grouped"] = "list",
-) -> list[ClientHit | DocumentHit] | SearchResponse:
+    type: Annotated[
+        Literal["client", "document"] | None,
+        Query(description="Optional filter to search only clients or only documents"),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=25, description="Maximum hits per result type (default 10)"),
+    ] = 10,
+    include_content: Annotated[
+        bool,
+        Query(description="Include full raw document content in document hits"),
+    ] = False,
+) -> list[ClientHit | DocumentHit]:
     q = q.strip()
     if not q or "\x00" in q:
         raise HTTPException(status_code=422, detail="Enter a nonblank text query without NUL characters")
+
     start = monotonic()
-    clients = client_hits(session, q) if type != "document" else []
-    documents = document_hits(session, q) if type != "client" else []
+    corrected_q = None
+    query_vec = None
+    documents: list[DocumentHit] = []
+    clients: list[ClientHit] = []
+    has_strong_client = False
+
+    # Compute document query embedding once and share it with client description fallback if needed.
+    if type != "client":
+        documents, corrected_q, query_vec = document_hits(
+            session, q, limit=limit, include_content=include_content
+        )
+    if type != "document":
+        clients, has_strong_client = client_hits(
+            session, q, limit=limit, query_vector=query_vec, corrected_q=corrected_q
+        )
+
     logging.getLogger("uvicorn.error").info(
         "Search completed in %.1f ms with %d clients and %d documents",
         (monotonic() - start) * 1000, len(clients), len(documents),
     )
-    results = SearchResponse(clients=clients, documents=documents)
-    if view == "grouped":
-        return results
-    return [*results.clients, *results.documents]
+
+    # Clients lead when a strong client match exists; otherwise put documents first if documents matched.
+    if has_strong_client or not documents:
+        return [*clients, *documents]
+    return [*documents, *clients]

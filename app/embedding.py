@@ -1,4 +1,4 @@
-"""BGE-small-en-v1.5 passage indexing and CPU inference."""
+"""BGE-small-en-v1.5 passage indexing, normalized FTS vector generation, and CPU inference."""
 
 import logging
 from functools import lru_cache
@@ -7,9 +7,12 @@ from threading import Lock
 
 import numpy as np
 import onnxruntime as ort
+from sqlalchemy import func, literal_column, text
+from sqlalchemy.orm import Session
 from tokenizers import Tokenizer
 
-from app.models import Document, DocumentChunk
+from app.models import Client, Document, DocumentChunk
+from app.normalize import extract_vocab_words, normalize_for_index, normalize_text
 
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
@@ -65,7 +68,7 @@ def embed(texts: list[str]) -> list[np.ndarray]:
 def passage_bounds(content: str):
     offsets = tokenizer().encode(content, add_special_tokens=False).offsets
     start = 0
-    # Preserve original character offsets. Prefer a complete paragraph or form row.
+    # Preserve original raw character offsets. Prefer a complete paragraph or form row.
     while start + 180 < len(offsets):
         stop = start + 180
         for i in range(stop, start + 95, -1):
@@ -77,13 +80,29 @@ def passage_bounds(content: str):
     yield offsets[start][0] if start else 0, len(content)
 
 
-def _passages(documents):
+def _passages(documents: list[Document]):
     for document in documents:
-        title_tokens = tokenizer().encode(document.title, add_special_tokens=False).offsets
-        title = document.title[:title_tokens[63][1]] if len(title_tokens) > 64 else document.title
+        clean_title = normalize_text(document.title)
+        title_tokens = tokenizer().encode(clean_title, add_special_tokens=False).offsets
+        embed_title = clean_title[:title_tokens[63][1]] if len(title_tokens) > 64 else clean_title
+        norm_title = normalize_for_index(document.title)
         for ordinal, (start, end) in enumerate(passage_bounds(document.content)):
-            chunk = DocumentChunk(document_id=document.id, ordinal=ordinal, start_char=start, end_char=end)
-            yield chunk, f"{title}\n{document.content[start:end]}"
+            raw_slice = document.content[start:end]
+            clean_slice = normalize_text(raw_slice)
+            norm_passage = normalize_for_index(raw_slice)
+            search_vec = func.setweight(func.to_tsvector("english", norm_title), literal_column("'A'")).op("||")(
+                func.setweight(func.to_tsvector("english", norm_passage), literal_column("'B'"))
+            )
+            chunk = DocumentChunk(
+                document_id=document.id,
+                ordinal=ordinal,
+                start_char=start,
+                end_char=end,
+                normalized_title=norm_title,
+                normalized_passage=norm_passage,
+                search_vector=search_vec,
+            )
+            yield chunk, f"{embed_title}\n{clean_slice}"
 
 
 def index_documents(documents: list[Document]):
@@ -92,3 +111,37 @@ def index_documents(documents: list[Document]):
         for chunk, vector in zip(chunks, embed(list(texts)), strict=True):
             chunk.embedding = vector
             yield chunk
+
+
+def embed_client_descriptions(clients: list[Client]) -> None:
+    targets = [c for c in clients if c.description and c.description.strip()]
+    for batch in batched(targets, 16):
+        texts = [normalize_text(c.description or "") for c in batch]
+        for client, vector in zip(batch, embed(texts), strict=True):
+            client.description_embedding = vector
+
+
+_UPSERT_VOCAB = text("""
+INSERT INTO search_vocab (word, doc_freq)
+SELECT word, 1 FROM unnest(CAST(:words AS text[])) AS word
+ON CONFLICT (word) DO UPDATE SET doc_freq = search_vocab.doc_freq + 1
+""")
+
+
+def upsert_vocab(session: Session, words: set[str]) -> None:
+    if words:
+        session.execute(_UPSERT_VOCAB, {"words": sorted(words)})
+
+
+def vocab_for_documents(documents: list[Document]) -> set[str]:
+    words: set[str] = set()
+    for doc in documents:
+        words.update(extract_vocab_words(doc.title, doc.content))
+    return words
+
+
+def vocab_for_clients(clients: list[Client]) -> set[str]:
+    words: set[str] = set()
+    for c in clients:
+        words.update(extract_vocab_words(c.first_name, c.last_name, c.email, c.description or ""))
+    return words

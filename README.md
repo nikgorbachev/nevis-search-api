@@ -1,6 +1,6 @@
 # Nevis client and document search
 
-Find clients by name or email and find evidence inside their documents. FastAPI serves the HTTP API. PostgreSQL handles literal, full-text, trigram, and vector search.
+Find clients by name, email, or description and locate verbatim evidence inside their documents. FastAPI serves the HTTP API. PostgreSQL handles normalized full-text search (GIN), Damerau-Levenshtein & trigram fuzzy matching (`fuzzystrmatch` + `pg_trgm`), and local semantic vector retrieval (`pgvector` HNSW).
 
 ## Start the API
 
@@ -10,38 +10,51 @@ Run from the repository root with Docker Compose.
 docker compose up --build
 ```
 
-The first build downloads Python dependencies and a pinned, quantized English BGE-small model. All inference runs locally on CPU. No external API keys are needed. After PostgreSQL passes its health check, the API applies the migrations and indexes existing documents before serving requests. Open [Swagger UI](http://localhost:8000/docs) once Uvicorn starts.
+The first build downloads Python dependencies and a pinned, quantized English `BAAI/bge-small-en-v1.5` ONNX model. All inference runs locally on CPU with no external API keys. After PostgreSQL passes its health check, the API applies Alembic migrations (`0001`–`0003`) and backfills any unindexed documents or client descriptions before serving requests. Open [Swagger UI](http://localhost:8000/docs) once Uvicorn starts.
 
 ## Seed sample data
 
-With the stack running, use Python 3 to create a synthetic client and a plain-text utility bill over HTTP.
+With the stack running, create a single synthetic client and utility bill over HTTP:
 
 ```sh
 python3 scripts/seed.py
 ```
 
-For the larger interview demo, load 100 synthetic clients and 1,593 documents into the named PostgreSQL volume. The bulk fixture uses stable IDs. Both commands can be repeated.
+For the full wealth-management demo (120 synthetic clients, 1,486 documents including multi-section Investment Policy Statements, an Irrevocable Trust Deed, messy OCR scans, and forwarded email threads), load the deterministic fixture and run the repeatable backfill:
 
 ```sh
 python3 scripts/seed_demo.py | docker compose exec -T db psql -X -U nevis -d nevis -v ON_ERROR_STOP=1
 docker compose exec api python -m app.backfill
 ```
 
+To benchmark firm-scale ingestion (e.g. 1,000 clients), pass `--clients 1000` to `scripts/seed_demo.py`. Multiple backfill workers can run safely in parallel (`FOR UPDATE SKIP LOCKED`).
+
 ## Search examples
 
-Open `GET /search` in Swagger or run these requests after loading the larger demo.
+Open `GET /search` in Swagger or run these requests after loading the demo corpus:
 
 ```sh
 curl -sG localhost:8000/search --data-urlencode 'q=NevisWealth' --data 'type=client'
+curl -sG localhost:8000/search --data-urlencode 'q=neviswelth' --data 'type=client'
 curl -sG localhost:8000/search --data-urlencode 'q=address proof' --data 'type=document'
+curl -sG localhost:8000/search --data-urlencode 'q=adres proof' --data 'type=document'
 curl -sG localhost:8000/search --data-urlencode 'q=ZK-4729'
 curl -sG localhost:8000/search --data-urlencode 'q=2.5%'
-curl -sG localhost:8000/search --data-urlencode 'q=QQ-0047' --data 'view=grouped'
+curl -sG localhost:8000/search --data-urlencode 'q=cryptocurrency staking yield' --data 'type=document'
 ```
 
-The default response is an array of typed hits. Clients appear first, followed by documents. Each type has its own relevance order and a cap of ten. Use `type=client` or `type=document` for one section, or `view=grouped` for an object with `clients` and `documents` arrays. A missing form code returns `[]` by default or `{"clients":[],"documents":[]}` in the grouped view. A blank query returns HTTP 422.
+### API contract
 
-For `NevisWealth`, the client result is Jordan Example, with `matched_field` set to `email`. For `address proof`, the first document is the November electricity bill. Its preview includes the service address. Searching for `ZK-4729` returns this complete response from the seeded database.
+- `GET /search` always returns a **flat JSON array of typed hits** (`type: "client"` or `type: "document"`), matching the OpenAPI specification.
+- Optional query parameters:
+  - `type=client|document` — filter to one entity type (avoids document retrieval/embedding work on client-only searches).
+  - `limit=1..25` — cap results per type (default `10`).
+  - `include_content=true|false` — include full raw `content` on document hits (default `false`; drill down anytime via `GET /documents/{id}`).
+- `ClientHit` returns the full `Client` fields (`id`, `first_name`, `last_name`, `email`, `description`, `social_links`) plus `type` and `matched_field`.
+- `DocumentHit` returns `type`, `id`, `client_id`, `client_name`, `title`, `created_at`, a clean extractive `summary`, and a verbatim `evidence` preview anchored to raw `content` (or `title`) with exact Unicode character offsets and highlight spans.
+- Strong exact/prefix/substring client matches lead mixed results; otherwise document matches appear first. Empty matches return `[]` with HTTP `200`; blank, over-length, or NUL queries return HTTP `422`.
+
+Example response for `GET /search?q=ZK-4729`:
 
 ```json
 [
@@ -51,6 +64,8 @@ For `NevisWealth`, the client result is Jordan Example, with `matched_field` set
     "client_id": "7a69d696-860f-55ba-961d-73a7af2b639a",
     "client_name": "Elena Müller",
     "title": "Family transition memorandum",
+    "created_at": "2026-11-26T03:35:19.409442Z",
+    "summary": "Engagement scope The family asked for a single written record of decisions made during the first two planning meetings.",
     "evidence": {
       "source": "content",
       "start": 932,
@@ -61,14 +76,15 @@ For `NevisWealth`, the client result is Jordan Example, with `matched_field` set
           "end": 12
         }
       ]
-    }
+    },
+    "content": null
   }
 ]
 ```
 
 ## Try it in Swagger
 
-1. Open `POST /clients`, select **Try it out**, and execute this request. Expect **201 Created** and copy the returned `id`.
+1. Open `POST /clients`, select **Try it out**, and execute:
 
    ```json
    {
@@ -80,7 +96,9 @@ For `NevisWealth`, the client result is Jordan Example, with `matched_field` set
    }
    ```
 
-2. Open `POST /clients/{id}/documents`, select **Try it out**, paste the client ID into the `id` path field, and execute this request. Expect **201 Created** with the same ID in `client_id` and a `created_at` timestamp.
+   Expect **201 Created** and copy the returned `id`.
+
+2. Open `POST /clients/{id}/documents`, paste the client ID into `id`, and execute:
 
    ```json
    {
@@ -89,46 +107,43 @@ For `NevisWealth`, the client result is Jordan Example, with `matched_field` set
    }
    ```
 
-   Repeat with `missing-client` as the ID to get **404 Not Found**.
+   Expect **201 Created**. Repeat with `missing-client` to get **404 Not Found**. Fetch any document directly via `GET /documents/{id}`.
 
-Check that PostgreSQL has enabled the extension.
-
-```sh
-docker compose exec db psql -U nevis -d nevis -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
-```
-
-Run the HTTP integration tests against the running stack.
+Check PostgreSQL extensions and run the integration tests against the running stack:
 
 ```sh
+docker compose exec db psql -U nevis -d nevis -c "SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector', 'pg_trgm', 'unaccent', 'fuzzystrmatch') ORDER BY 1;"
 python3 -m unittest discover -s tests -v
 ```
 
-## How ranking works
+## Architecture & Ranking Tradeoffs
 
-- Clients use case-insensitive email lookup, accent-insensitive name matching, literal fragments and description search. A trigram fallback handles misspelled names. Input punctuation is literal throughout substring matching.
-- Documents are indexed when created, in the same transaction as their passages. Short documents stay whole. Long ones split near line breaks around 180 tokenizer tokens, with 20 tokens of overlap for forced splits. The title supplies context for the local 384-dimensional embedding. The source content and character offsets support verbatim previews.
-- Each document contributes its best passage to each shortlist. PostgreSQL ranks up to 20 unique documents by weighted English full-text matches and up to 20 by exact cosine similarity. Weighted reciprocal rank fusion adds `weight / (60 + rank)` per eligible arm. A known form code or percentage requires a literal match with token boundaries. Queries such as `address proof` have one explicit expansion to the vocabulary of a utility bill and service address. Without it, our local model favored onboarding checklists.
-- Evidence contains the original passage excerpt, its zero-based start in the source title or content, and half-open highlight ranges relative to the excerpt. Offsets count Unicode code points. A semantic match may have an empty highlight list. Search timing and result counts are logged without the query text.
-- The initial model, `BAAI/bge-small-en-v1.5`, runs through ONNX Runtime. Its quantized ONNX export is pinned by revision in the Dockerfile. The encoder uses CLS pooling and L2 normalization. Changing the embedding model requires rebuilding all passage vectors. An exact scan keeps this small corpus simple. Larger deployments could add indexes once latency warrants them. [Model card](https://huggingface.co/BAAI/bge-small-en-v1.5) · [ONNX export](https://huggingface.co/Xenova/bge-small-en-v1.5)
+- **Store raw, search normalized, display clean:** Raw `documents.content` is never mutated. At index time, [app/normalize.py](./app/normalize.py) builds a conservative normalized view (NFKC ligature repair `ﬁ`→`fi`, PDF/OCR line-wrap de-hyphenation `elec-\ntricity`→`electricity`, spaced OCR header repair `U T I L I T Y`→`UTILITY`, email quote/divider cleanup, `%`/currency spacing, accent folding, and compact form-code aliases like `ZK4729`↔`ZK-4729`) for embeddings, precomputed weighted `tsvector` (`GIN`), and `pg_trgm` indexes. `summary` uses the cleaned text while `evidence` keeps exact raw Unicode character offsets.
+- **Clients:** Tiered SQL priority (exact email → exact accent-folded name → prefix → substring name → substring email → description FTS). When exact name/email lookup misses, an OpenSearch-style token-level `levenshtein_less_equal` fuzzy fallback (`fuzzystrmatch`) recovers single- and multi-token name/email typos (`Elna`, `Muler`, `Marn Red`, `neviswelth`, `welth`), followed by a semantic description fallback over `clients.description_embedding` (`philanthropy` → charitable commitment, `exiting a family company` → gradual exit from a family business).
+- **Documents (3-Step Funnel):**
+  1. **Discovery & Chunking:** Short docs stay whole; long docs split near line breaks around 180 tokens (20-token overlap on forced splits) with title context baked into each 384-dim `BAAI/bge-small-en-v1.5` embedding (quantized ONNX, CLS pooling, L2 normalized).
+  2. **Indexed Hybrid Retrieval + RRF:** Precomputed `search_vector` (`GIN`) + trigram (`GIN`) lexical shortlist (with a minimum query-term quorum gate so a single generic word cannot flood results) is fused with a `pgvector` `HNSW` cosine shortlist (`0.7` lexical / `0.3` semantic, `k=60`). Two-tier semantic admission (`0.60` when lexical agrees, `0.69` for semantic-only hits) rejects out-of-domain and near-domain false positives.
+  3. **Typo Recovery & Verbatim Evidence:** Out-of-vocabulary subword-split query terms (never valid single-token English words in BGE's 30k vocabulary, and never numeric/form IDs) undergo Damerau-Levenshtein spell correction against `search_vocab` (`portfolo`→`portfolio`, `cuorier`→`courier`, `adres proof`→`address proof`), while strict identifier queries (`ZK-4729`, `ZK4729`, `2.5%`, `25%`) enforce exact token boundaries (`ZK-4728` returns `[]`). `evidence()` selects the highest-density matching sentence/row and highlights exact/accent-folded/stemmed tokens without fabricating highlights on paraphrases.
 
-## Retrieval evaluation
+## 3-Fold Retrieval Evaluation
 
-With the demo indexed and the API running, replay the document queries, client lookups and evidence checks from the repository root.
+With the demo corpus indexed and the API running, run the QAD-2-inspired 3-fold evaluation suite (`Doc Hit@1/5`, `MRR`, `Segment Hit@1`, `Deduplicated Graded Segment NDCG@5`, `Cue Highlight Exactness`, `Offset Integrity`, `Negatives by Subclass`, and latency breakdown):
 
 ```sh
 docker compose exec -T api python - < scripts/evaluate.py
 ```
 
-The development set contains six positive and three negative document queries. A cosine floor of 0.60 rejected all three negatives. With the address-proof expansion, fixed weights of 70% lexical and 30% semantic placed all six target titles first. Equal weights placed five first. The query-length schedule tied the fixed weights on this set.
+Measured on the 120-client / 1,486-document corpus (1,536 chunks, 26 multi-chunk documents, `COSINE_FLOOR=0.60`, `SEMANTIC_ONLY_FLOOR=0.69`):
 
-On seven held-out positives and three held-out negatives, the title-level results were:
+| Mode (`w_sem`) | Split | Doc Hit@1 | Doc Hit@5 | MRR | Seg Hit@1 | Dedup Seg NDCG@5 | Cue HL Exact | Offset Integrity |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Lexical-only (`0.0`) | All + Typos (35) | 0.943 | 0.943 | 0.943 | 0.943 | 0.895 | 30/30 | 34/34 |
+| Semantic-only (`1.0`) | All + Typos (35) | 0.629 | 0.714 | 0.671 | 0.629 | 0.626 | 20/22 | 26/26 |
+| **Hybrid shipped (`0.3`)** | **Non-Typo (28)** | **0.964** | **0.964** | **0.964** | **0.964** | **0.919** | **24/24** | **27/27** |
+| **Hybrid shipped (`0.3`)** | **All + Typos (35)** | **0.971** | **0.971** | **0.971** | **0.971** | **0.909** | **30/30** | **34/34** |
+| Hybrid equal (`0.5`) | All + Typos (35) | 0.914 | 0.971 | 0.943 | 0.914 | 0.885 | 30/30 | 34/34 |
 
-| Ranking | Target first | Target in top five | Negatives with hits |
-| --- | ---: | ---: | ---: |
-| Lexical | 4/7 | 5/7 | 0/3 |
-| Semantic | 5/7 | 5/7 | 1/3 |
-| Hybrid | 5/7 | 5/7 | 0/3 |
-
-The fixed corpus in this run contained the 1,593 demo documents and two earlier example records. The labels accept any document with the expected title. Each arm uses the same domain expansion. The semantic-only comparison also tries vectors for identifier queries, which take the literal path in the shipped API.
-
-Two held-out queries missed their labeled title. Asking where the household lives surfaced a storage inventory. Asking about conditions on payment after a company sale surfaced a family transition memo. The latter covers a related topic. These synthetic judgments cover a few representative tasks and leave room for better paraphrase handling. A shortlist reranker would need to show a gain on a larger labeled set to justify the extra inference.
+- **Typo subset (7 doc queries: `portfolo`, `electrcity bill`, `adres proof`, `vestng shares`, `cuorier tracking`, `ZK4729`, `indemnity escow`):** **7/7 (1.000) Doc & Seg Hit@1**, **0.869 Seg NDCG@5**, **6/6 Cue Highlights**.
+- **Client checks (exact, accent-folded, single/multi-token name & email typos, semantic descriptions):** **12/12**.
+- **Negatives (14 queries across OOD, missing/near-miss IDs like `ZK-4728`, SQL wildcards `%_`/`%%`, and near-domain financial topics):** **13/14 True Negative Rate (92.9%)** — `0/3` OOD, `0/5` missing IDs, `0/2` wildcards, `1/4` near-domain (`margin call liquidation notice` matched the corpus's `Capital call notice CAP-3092` via `"call"` + `"notice"`).
+- **Warm document search HTTP latency:** **45.4 ms median** (down from ~350 ms prior to stored `tsvector` GIN + HNSW indexing).

@@ -35,6 +35,8 @@ class ClientHit(BaseModel):
     first_name: str
     last_name: str
     email: str
+    description: str | None = None
+    social_links: list[str] = Field(default_factory=list)
     matched_field: str
 
 
@@ -56,9 +58,7 @@ class DocumentHit(BaseModel):
     client_id: str
     client_name: str
     title: str
+    created_at: AwareDatetime
+    summary: str
     evidence: Evidence
-
-
-class SearchResponse(BaseModel):
-    clients: list[ClientHit]
-    documents: list[DocumentHit]
+    content: str | None = None
