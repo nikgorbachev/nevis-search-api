@@ -4,9 +4,13 @@ Runs automatically inside the API container (where SQLAlchemy/Pydantic are insta
   docker compose exec -T api python -m unittest discover -s tests -v
 """
 
+import os
 import unittest
 
 try:
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.main import require_api_token
     from app.search import _damerau_levenshtein, _expand_alias, evidence, fuse
     HAS_APP_DEPS = True
 except ModuleNotFoundError:
@@ -85,3 +89,28 @@ class RankingUnitTests(unittest.TestCase):
         ev = evidence("address proof", row, set())
         self.assertEqual(ev.highlights, [])
         self.assertIn("12 Sample Lane", ev.text)
+
+    def test_optional_bearer_auth(self):
+        prev = os.environ.pop("API_TOKEN", None)
+        try:
+            # Open when API_TOKEN is unset.
+            self.assertIsNone(require_api_token(None))
+
+            # Enforced when API_TOKEN is set.
+            os.environ["API_TOKEN"] = "secret-demo-token"
+            with self.assertRaises(HTTPException) as missing:
+                require_api_token(None)
+            self.assertEqual(missing.exception.status_code, 401)
+
+            with self.assertRaises(HTTPException) as wrong:
+                require_api_token(HTTPAuthorizationCredentials(scheme="Bearer", credentials="wrong"))
+            self.assertEqual(wrong.exception.status_code, 401)
+
+            self.assertIsNone(
+                require_api_token(HTTPAuthorizationCredentials(scheme="Bearer", credentials="secret-demo-token"))
+            )
+        finally:
+            if prev is None:
+                os.environ.pop("API_TOKEN", None)
+            else:
+                os.environ["API_TOKEN"] = prev

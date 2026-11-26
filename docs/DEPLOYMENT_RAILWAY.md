@@ -21,8 +21,9 @@ The repository's [Dockerfile](../Dockerfile) is Railway-ready out of the box:
 3. Under **Variables**, add:
    ```text
    DATABASE_URL=${{pgvector.DATABASE_URL}}
+   API_TOKEN=<generate-a-strong-random-token>
    ```
-   *(Replace `pgvector` with the exact service name of your PostgreSQL service in Railway.)*
+   *(Replace `pgvector` with the exact service name of your PostgreSQL service in Railway. Setting `API_TOKEN` protects all API routes with `Authorization: Bearer <API_TOKEN>` while keeping Swagger UI `/docs` accessible with the **Authorize** button.)*
 4. Under **Settings → Networking**, click **Generate Domain** to expose HTTPS on port `8000` (Railway injects `PORT` automatically).
 5. Wait for the first build & deploy to finish. Open `https://<your-domain>.up.railway.app/docs` to verify Swagger UI loads cleanly.
 

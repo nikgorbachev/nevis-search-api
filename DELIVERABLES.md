@@ -2,7 +2,7 @@
 
 **Author:** Nikolai Gorbachev  
 **Repository:** https://github.com/nikgorbachev/nevis-search-api  
-**Live Deployed API (Railway):** https://nevis-search-api-production-04d73498.up.railway.app/docs *(no credentials required; pre-seeded with 120 synthetic clients & 1,486 documents)*  
+**Live Deployed API (Railway):** https://nevis-search-api-production-04d73498.up.railway.app/docs *(pre-seeded with 120 synthetic clients & 1,486 documents; protected via Bearer `API_TOKEN` provided in the submission notes)*  
 **Tech Stack:** Python 3.13, FastAPI, SQLAlchemy 2.0, Alembic, PostgreSQL 17 (`pgvector`, `pg_trgm`, `unaccent`, `fuzzystrmatch`), Local Quantized ONNX `BAAI/bge-small-en-v1.5` (CPU, key-free)
 
 ---
@@ -17,7 +17,7 @@
 | **README with setup & search examples** | [README.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/README.md) | Step-by-step Docker setup, seeding commands, `curl` + JSON response examples, and 3-fold retrieval evaluation summary. |
 | **API documentation (Swagger & Markdown)** | [Live Swagger UI](https://nevis-search-api-production-04d73498.up.railway.app/docs) · `http://localhost:8000/docs` · [docs/ARCHITECTURE.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/ARCHITECTURE.md) | OpenAPI 3.1 interactive Swagger docs + deep-dive engineering/product/retrieval design document. |
 | **Optional: Quick summary of document content** | [app/normalize.py](https://github.com/nikgorbachev/nevis-search-api/blob/main/app/normalize.py) (`summarize_document`) | Every `DocumentHit` includes a clean extractive `summary` alongside verbatim `evidence` offsets and highlight spans. |
-| **Optional: Deployed API (Railway)** | [Live API](https://nevis-search-api-production-04d73498.up.railway.app/docs) · [docs/DEPLOYMENT_RAILWAY.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/DEPLOYMENT_RAILWAY.md) | Live public HTTPS deployment on Railway + `pgvector` (no auth needed; synthetic demo data only), verified end-to-end with 17/17 showcase checks and all integration tests (`186 ms` median RTT). |
+| **Optional: Deployed API (Railway)** | [Live API](https://nevis-search-api-production-04d73498.up.railway.app/docs) · [docs/DEPLOYMENT_RAILWAY.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/DEPLOYMENT_RAILWAY.md) | Live public HTTPS deployment on Railway + `pgvector` protected by Bearer `API_TOKEN` (open in Swagger UI via **Authorize** button; synthetic demo data only), verified end-to-end with 17/17 showcase checks and integration tests (`186 ms` median RTT). |
 
 ---
 

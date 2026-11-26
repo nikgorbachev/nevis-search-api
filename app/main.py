@@ -1,9 +1,12 @@
 import logging
+import os
+import secrets
 from time import monotonic
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -31,6 +34,25 @@ app = FastAPI(
     description="Hybrid client and document search API with normalized indexing, fuzzy typo recovery, and verbatim evidence highlighting.",
 )
 DatabaseSession = Annotated[Session, Depends(get_session)]
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def require_api_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> None:
+    """Enforce Bearer token auth when API_TOKEN is configured (e.g. cloud deployment)."""
+    expected = os.getenv("API_TOKEN")
+    if not expected:
+        return
+    if credentials is None or not secrets.compare_digest(credentials.credentials, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+Protected = [Depends(require_api_token)]
 
 
 @app.exception_handler(EmbeddingUnavailable)
@@ -38,7 +60,7 @@ def embedding_error(request, error):
     return JSONResponse(status_code=503, content={"detail": str(error)})
 
 
-@app.post("/clients", status_code=status.HTTP_201_CREATED)
+@app.post("/clients", status_code=status.HTTP_201_CREATED, dependencies=Protected)
 def create_client(payload: ClientCreate, session: DatabaseSession) -> ClientResponse:
     client = Client(**payload.model_dump())
     embed_client_descriptions([client])
@@ -53,6 +75,7 @@ def create_client(payload: ClientCreate, session: DatabaseSession) -> ClientResp
 @app.post(
     "/clients/{id}/documents",
     status_code=status.HTTP_201_CREATED,
+    dependencies=Protected,
     responses={404: {"description": "Client not found"}},
 )
 def create_document(
@@ -74,6 +97,7 @@ def create_document(
 @app.get(
     "/documents/{id}",
     summary="Fetch a document by ID",
+    dependencies=Protected,
     responses={404: {"description": "Document not found"}},
 )
 def get_document(id: str, session: DatabaseSession) -> DocumentResponse:
@@ -83,7 +107,7 @@ def get_document(id: str, session: DatabaseSession) -> DocumentResponse:
     return DocumentResponse.model_validate(document)
 
 
-@app.get("/search", summary="Search clients and documents")
+@app.get("/search", summary="Search clients and documents", dependencies=Protected)
 def search(
     q: Annotated[str, Query(min_length=1, max_length=256, description="Search query")],
     session: DatabaseSession,

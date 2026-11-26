@@ -7,11 +7,15 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 BASE = os.getenv("NEVIS_TEST_URL", "http://127.0.0.1:8000")
+API_TOKEN = os.getenv("NEVIS_API_TOKEN")
 
 
 def request(path, data=None):
     payload = json.dumps(data).encode() if data is not None else None
-    with urlopen(Request(BASE + path, data=payload, headers={"Content-Type": "application/json"}), timeout=60) as res:
+    headers = {"Content-Type": "application/json"}
+    if API_TOKEN:
+        headers["Authorization"] = f"Bearer {API_TOKEN}"
+    with urlopen(Request(BASE + path, data=payload, headers=headers), timeout=60) as res:
         return json.load(res)
 
 

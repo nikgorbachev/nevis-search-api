@@ -5,6 +5,14 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 BASE_URL = os.getenv("NEVIS_TEST_URL", "http://127.0.0.1:8000")
+API_TOKEN = os.getenv("NEVIS_API_TOKEN")
+
+
+def auth_headers(extra=None):
+    headers = dict(extra or {})
+    if API_TOKEN:
+        headers["Authorization"] = f"Bearer {API_TOKEN}"
+    return headers
 
 
 class CreateTests(unittest.TestCase):
@@ -12,7 +20,7 @@ class CreateTests(unittest.TestCase):
         request = Request(
             BASE_URL + path,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=auth_headers({"Content-Type": "application/json"}),
             method="POST",
         )
         try:
@@ -62,7 +70,7 @@ class CreateTests(unittest.TestCase):
 
     def test_missing_document_returns_404(self):
         try:
-            urlopen(BASE_URL + "/documents/missing-doc", timeout=10)
+            urlopen(Request(BASE_URL + "/documents/missing-doc", headers=auth_headers()), timeout=10)
             self.fail("Expected HTTP 404 for missing document")
         except HTTPError as error:
             self.assertEqual(error.code, 404)
