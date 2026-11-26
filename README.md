@@ -2,6 +2,8 @@
 
 Find clients by name, email, or description and locate verbatim evidence inside their documents. FastAPI serves the HTTP API. PostgreSQL handles normalized full-text search (GIN), Damerau-Levenshtein & trigram fuzzy matching (`fuzzystrmatch` + `pg_trgm`), and local semantic vector retrieval (`pgvector` HNSW).
 
+> **Live Demo (Railway):** [Swagger UI](https://nevis-search-api-production-04d73498.up.railway.app/docs) (`https://nevis-search-api-production-04d73498.up.railway.app`, pre-seeded with 120 synthetic clients & 1,486 documents — no credentials required).
+
 ## Start the API
 
 Run from the repository root with Docker Compose.

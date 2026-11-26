@@ -2,6 +2,7 @@
 
 **Author:** Nikolai Gorbachev  
 **Repository:** https://github.com/nikgorbachev/nevis-search-api  
+**Live Deployed API (Railway):** https://nevis-search-api-production-04d73498.up.railway.app/docs *(no credentials required; pre-seeded with 120 synthetic clients & 1,486 documents)*  
 **Tech Stack:** Python 3.13, FastAPI, SQLAlchemy 2.0, Alembic, PostgreSQL 17 (`pgvector`, `pg_trgm`, `unaccent`, `fuzzystrmatch`), Local Quantized ONNX `BAAI/bge-small-en-v1.5` (CPU, key-free)
 
 ---
@@ -14,9 +15,9 @@
 | **Docker Compose for reproducibility** | [compose.yaml](https://github.com/nikgorbachev/nevis-search-api/blob/main/compose.yaml) · [Dockerfile](https://github.com/nikgorbachev/nevis-search-api/blob/main/Dockerfile) | Single command `docker compose up --build` starts PostgreSQL + pgvector, applies migrations, backfills embeddings/indexes, and serves Swagger on `http://localhost:8000/docs`. Zero external API keys required. |
 | **Tests for core logic and edge cases** | [tests/](https://github.com/nikgorbachev/nevis-search-api/tree/main/tests) | Pure unit tests (`test_normalize.py`, `test_ranking_unit.py`) + self-contained HTTP integration tests (`test_api.py`, `test_search.py`) covering exact/typo/semantic search, dirty OCR normalization, `%_` escaping, percentage boundaries, near-domain negatives, and HTTP `404`/`422` validation. |
 | **README with setup & search examples** | [README.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/README.md) | Step-by-step Docker setup, seeding commands, `curl` + JSON response examples, and 3-fold retrieval evaluation summary. |
-| **API documentation (Swagger & Markdown)** | `http://localhost:8000/docs` (Swagger UI) · [docs/ARCHITECTURE.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/ARCHITECTURE.md) | OpenAPI 3.1 interactive Swagger docs + deep-dive engineering/product/retrieval design document. |
+| **API documentation (Swagger & Markdown)** | [Live Swagger UI](https://nevis-search-api-production-04d73498.up.railway.app/docs) · `http://localhost:8000/docs` · [docs/ARCHITECTURE.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/ARCHITECTURE.md) | OpenAPI 3.1 interactive Swagger docs + deep-dive engineering/product/retrieval design document. |
 | **Optional: Quick summary of document content** | [app/normalize.py](https://github.com/nikgorbachev/nevis-search-api/blob/main/app/normalize.py) (`summarize_document`) | Every `DocumentHit` includes a clean extractive `summary` alongside verbatim `evidence` offsets and highlight spans. |
-| **Optional: Cloud deployment guide** | [docs/DEPLOYMENT_RAILWAY.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/DEPLOYMENT_RAILWAY.md) | Railway-ready `Dockerfile` and PostgreSQL `DATABASE_URL` normalization. *(Add live Railway URL here once deployed.)* |
+| **Optional: Deployed API (Railway)** | [Live API](https://nevis-search-api-production-04d73498.up.railway.app/docs) · [docs/DEPLOYMENT_RAILWAY.md](https://github.com/nikgorbachev/nevis-search-api/blob/main/docs/DEPLOYMENT_RAILWAY.md) | Live public HTTPS deployment on Railway + `pgvector` (no auth needed; synthetic demo data only), verified end-to-end with 17/17 showcase checks and all integration tests (`186 ms` median RTT). |
 
 ---
 
