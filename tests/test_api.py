@@ -59,3 +59,10 @@ class CreateTests(unittest.TestCase):
 
         status, body = self.post("/clients/missing-client/documents", {"title": "Bill"})
         self.assertEqual(status, 422, body)
+
+    def test_missing_document_returns_404(self):
+        try:
+            urlopen(BASE_URL + "/documents/missing-doc", timeout=10)
+            self.fail("Expected HTTP 404 for missing document")
+        except HTTPError as error:
+            self.assertEqual(error.code, 404)

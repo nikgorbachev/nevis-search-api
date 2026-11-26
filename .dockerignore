@@ -8,3 +8,5 @@
 !migrations/*.mako
 !migrations/versions/
 !migrations/versions/*.py
+!tests/
+!tests/*.py

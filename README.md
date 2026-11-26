@@ -109,12 +109,18 @@ Example response for `GET /search?q=ZK-4729`:
 
    Expect **201 Created**. Repeat with `missing-client` to get **404 Not Found**. Fetch any document directly via `GET /documents/{id}`.
 
-Check PostgreSQL extensions and run the integration tests against the running stack:
+Check PostgreSQL extensions and run both host and in-container unit/integration tests against the running stack:
 
 ```sh
 docker compose exec db psql -U nevis -d nevis -c "SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector', 'pg_trgm', 'unaccent', 'fuzzystrmatch') ORDER BY 1;"
 python3 -m unittest discover -s tests -v
+docker compose exec -T api python -m unittest discover -s tests -v
 ```
+
+For deep-dive retrieval, product-tradeoff, and cloud deployment documentation, see:
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — 3-step retrieval design, normalization layer, fuzzy matching, product tradeoffs, and scaling analysis
+- [docs/DEPLOYMENT_RAILWAY.md](./docs/DEPLOYMENT_RAILWAY.md) — Railway + pgvector deployment and seeding guide
+- [DELIVERABLES.md](./DELIVERABLES.md) — Reviewer quick-reference mapped to the assignment checklist
 
 ## Architecture & Ranking Tradeoffs
 

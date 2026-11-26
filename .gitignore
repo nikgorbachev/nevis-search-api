@@ -1,3 +1,5 @@
 __pycache__/
 .venv/
 .DS_Store
+SEARCH_PLAN.md
+SEARCH_STATE_REPORT.md

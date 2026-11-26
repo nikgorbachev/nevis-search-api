@@ -13,5 +13,6 @@ RUN mkdir /model && python -c "import urllib.request as u; u.urlretrieve('$MODEL
 COPY app app
 COPY alembic.ini .
 COPY migrations migrations
+COPY tests tests
 
 CMD ["sh", "-c", "alembic upgrade head && python -m app.backfill && exec uvicorn app.main:app --host 0.0.0.0 --no-access-log --port ${PORT:-8000}"]
