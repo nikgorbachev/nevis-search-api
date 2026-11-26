@@ -1,9 +1,10 @@
 import json
+import os
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("NEVIS_TEST_URL", "http://127.0.0.1:8000")
 
 
 class CreateTests(unittest.TestCase):
